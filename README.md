@@ -1,76 +1,46 @@
-# ADCTP (Ansible + Docker + Cloudflare Tunnel + Traefik + Portainer)
+# miuOps
 
-This Ansible playbook automates the deployment of a Docker-based infrastructure with:
-- **Traefik** for reverse proxy and automatic TLS certificate management
-- **Cloudflare Tunnel** for secure, encrypted connections without exposing ports to the internet
-- **Portainer CE** for web-based Docker management
-- **iptables Firewall** for securing both system and Docker networking
+Ansible-based bootstrap for secure Docker infrastructure on bare metal servers.
+
+miuOps provisions a server with Docker, Traefik, Cloudflare Tunnel, and an iptables firewall — then gets out of the way. Day-to-day service deployment is handled by your own private GitOps stack repo via GitHub Actions.
 
 ## Architecture Overview
-
-This setup creates a secure, automated infrastructure where:
-- Traffic flows through Cloudflare's network for security and performance
-- Services are automatically assigned subdomains with valid TLS certificates
-- No ports need to be exposed to the internet
-- New services can be deployed by simply adding labels to containers
-- System and Docker networking are secured with iptables rules
 
 ```
                 Internet Users
                       |
-                      ↓
-  ┌─────────────────────────────────────┐
-  │  INPUT iptables chain (system)      │
-  └─────────────────────────────────────┘
-                      |
+                      v
               [DNS: *.example.com]
                       |
                 Cloudflare CDN/WAF
                       |
-           ┌──────────┴──────────┐
-           │  Cloudflare Tunnel  │
-           └──────────┬──────────┘
+           +----------+----------+
+           |  Cloudflare Tunnel  |
+           +----------+----------+
                       |
                   cloudflared
                       |
                    Traefik
                       |
-   ┌─────────────────────────────────────┐
-   │  DOCKER-USER iptables chain         │
-   └─────────────────────────────────────┘
+   +-------------------------------------+
+   |  DOCKER-USER iptables chain         |
+   +-------------------------------------+
                       |
                 Docker Services
 ```
 
-## Repository Structure
-
-This repository has been organized into the following directories:
-
-```
-.
-├── ansible.cfg            # Ansible configuration file
-├── docs/                  # Documentation files
-├── examples/              # Example configuration files
-├── files/                 # Files used by Ansible (tunnel credentials)
-├── group_vars/            # Variables for Ansible groups
-├── playbook.yml           # Main Ansible playbook
-├── requirements.yml       # Ansible Galaxy requirements
-├── roles/                 # Ansible roles
-└── scripts/               # Utility scripts
-```
-
-For detailed information about the repository structure, see [docs/STRUCTURE.md](docs/STRUCTURE.md).
+- Traffic flows through Cloudflare's network for DDoS protection and WAF
+- No ports are exposed to the internet (all ingress via Cloudflare Tunnel)
+- Services get automatic TLS certificates via Let's Encrypt DNS challenge
+- System and Docker networking are secured with iptables rules
 
 ## Prerequisites
 
 1. A Cloudflare account with your domain
 2. Cloudflare API token with Zone:DNS:Edit permissions
 3. Cloudflare Tunnel created and credentials downloaded
-4. Bare metal servers with SSH access
-5. Ansible ≥ 2.10 on your control machine
-6. Compatible bcrypt Python package (see Compatibility Notes section)
-
-You can check if your system meets the prerequisites by running:
+4. Bare metal server with SSH access (Debian/Ubuntu)
+5. Ansible >= 2.10 on your control machine
 
 ```bash
 ./scripts/check-prereqs.sh
@@ -78,71 +48,49 @@ You can check if your system meets the prerequisites by running:
 
 ## Quick Start
 
-For detailed installation instructions, see [docs/INSTALLATION.md](docs/INSTALLATION.md).
-
 ```bash
 # Clone repository
-git clone https://github.com/tianshanghong/metal
-cd metal
-
-# Check prerequisites
-./scripts/check-prereqs.sh
+git clone https://github.com/miupay/miuOps
+cd miuOps
 
 # Install Ansible requirements
 ansible-galaxy collection install -r requirements.yml
 
-# Configure (copy from examples)
-cp examples/inventory.ini.template inventory.ini
-cp examples/all.yml.template group_vars/all.yml
-
-# Edit configuration files
+# Configure
+cp inventory.ini.template inventory.ini
+cp group_vars/all.yml.template group_vars/all.yml
 nano inventory.ini
 nano group_vars/all.yml
 
-# Create Cloudflare Tunnel
+# Create Cloudflare Tunnel (or copy existing credentials)
 ./scripts/create-tunnel.sh
-# OR copy existing tunnel credentials
-cp ~/.cloudflared/<TUNNEL_ID>.json files/
 
-# Run playbook to deploy infrastructure and set up DNS
+# Bootstrap server
 ansible-playbook playbook.yml
 ```
 
+## What Gets Deployed
+
+| Component | Role | Purpose |
+|---|---|---|
+| iptables firewall | `firewall` | INPUT + DOCKER-USER chains, rate-limited SSH, zero public container exposure |
+| Docker engine | `docker` | Docker CE + Compose plugin, hardened daemon config |
+| Traefik | `traefik` | Reverse proxy, automatic TLS via Cloudflare DNS challenge, label-based routing |
+| Cloudflare Tunnel | `cloudflared` | Secure ingress, wildcard DNS records, systemd service |
+
 ## Domain Configuration
 
-This playbook supports both single and multiple domains through a simple configuration structure. In your `group_vars/all.yml` file:
+In `group_vars/all.yml`:
 
 ```yaml
-# List of all domains to be configured with Cloudflare Tunnel
-# First domain will be used as default for services without explicit domain
 domains:
   - domain: "example.com"
-    zone_id: "your_zone_id_here"  # Cloudflare Zone ID from dashboard
-  - domain: "anotherdomain.com"
-    zone_id: "another_zone_id_here"
+    zone_id: "your_zone_id_here"
 ```
-
-To set up your domains:
-
-1. Add all domains to your Cloudflare account with Cloudflare Tunnel enabled
-
-2. Obtain the Zone ID for each domain from your Cloudflare dashboard:
-   - Log in to Cloudflare
-   - Select your domain
-   - The Zone ID is displayed on the right side of the Overview page
-
-3. Update your `group_vars/all.yml` file with the domains and their Zone IDs
-
-4. Deploy your infrastructure with Ansible:
-   ```bash
-   ansible-playbook playbook.yml
-   ```
-
-The playbook will configure Cloudflare Tunnel for all your domains, create DNS records, and set up the routing rules.
 
 ## Adding New Services
 
-To add a new service, use Docker Compose and add these labels:
+Add Traefik labels to any Docker Compose service:
 
 ```yaml
 services:
@@ -162,129 +110,44 @@ networks:
     external: true
 ```
 
-For services on additional domains, simply change the Host rule:
+## Infrastructure Upgrades
 
-```yaml
-- "traefik.http.routers.myapp2.rule=Host(`app.anotherdomain.com`)"
+```bash
+# Update firewall rules
+ansible-playbook playbook.yml --tags firewall
+
+# Upgrade Traefik
+ansible-playbook playbook.yml --tags traefik
+
+# Upgrade cloudflared
+ansible-playbook playbook.yml --tags cloudflared
+
+# Upgrade Docker engine
+ansible-playbook playbook.yml --tags docker
 ```
-
-The `networks` section is required to connect your service to the existing Traefik network, and the `external: true` property ensures Docker uses the pre-existing network rather than creating a new one.
-
-Remember that each router name (e.g., `myapp`, `myapp2`) must be unique across all your services.
 
 ## Tunnel Management
 
-This project separates concerns between tunnel management (scripts) and DNS management (Ansible):
+- `scripts/create-tunnel.sh` — Create a Cloudflare Tunnel and prepare credentials
+- `scripts/delete-tunnel.sh` — Delete a tunnel and clean up credentials
+- DNS records are managed by Ansible during bootstrap
 
-- **create-tunnel.sh**: Creates Cloudflare Tunnels and prepares credentials
-- **delete-tunnel.sh**: Deletes Cloudflare Tunnels and cleans up credentials
-- **Ansible Playbook**: Manages all DNS records and infrastructure deployment
+## Security
 
-This separation ensures that DNS records stay in sync with your configuration and prevents conflicts between manual and automated management.
-
-## Security Notes
-
-- No ports are exposed to the internet as all traffic flows through Cloudflare Tunnel
-- All traffic is encrypted with TLS
-- Cloudflare provides DDoS protection and WAF capabilities
-- The setup minimizes attack surface by exposing only necessary services
-- Comprehensive iptables firewall protection:
-  - System INPUT chain secures the host system itself:
-    - Allows established connections and loopback traffic
-    - Permits access from management networks
-    - Whitelists specific service ports (SSH, etc.)
-  - DOCKER-USER chain secures container networking:
-    - Blocks all direct external access to containers
-    - Allows only established connections
-  - Zero public exposure of container services
-  - Both IPv4 and IPv6 are properly secured
-  - Rules persist across reboots via iptables-persistent
-- Sensitive files and credentials are excluded from version control:
-  - Server information (`inventory.ini`)
-  - API tokens and credentials (`group_vars/all.yml`)
-  - Tunnel credentials (`files/*.json`)
-- Interactive prompts are used to collect credentials securely during deployment
-- Secure password handling:
-  - Traefik dashboard uses SHA-512 hashed passwords
-  - Portainer uses bcrypt hashed passwords set at container startup
-
-## Customization
-
-- Modify the Traefik configuration in `roles/traefik/templates/traefik-compose.yml.j2`
-- Adjust Cloudflare Tunnel settings in `roles/cloudflared/templates/config.yml.j2`
-- Customize Portainer in `roles/portainer/templates/portainer-compose.yml.j2`
+- Zero exposed ports — all traffic flows through Cloudflare Tunnel
+- iptables firewall with default-DROP on INPUT and DOCKER-USER chains
+- Rate-limited SSH (6 attempts per 60 seconds)
+- Docker daemon hardened (ICC disabled, userland proxy disabled)
+- Sensitive files excluded from version control (`.gitignore`)
 
 ## Compatibility Notes
 
 ### bcrypt Python Module
-This playbook uses bcrypt for password hashing. Some versions of the bcrypt Python module (including version 4.0.0+) may cause compatibility issues with Ansible's password hashing functionality. If you encounter this error:
 
-```
-AttributeError: module 'bcrypt' has no attribute '__about__'
-```
-
-The included `scripts/bcrypt_patch.py` script can automatically fix this issue:
+If you encounter `AttributeError: module 'bcrypt' has no attribute '__about__'`:
 
 ```bash
-# Fix bcrypt compatibility issues
 python3 scripts/bcrypt_patch.py
 ```
 
-#### Script Features
-- **Auto-detection**: Automatically finds your Ansible Python environment
-- **Non-invasive**: Only patches what's necessary
-- **Safe**: Validates if the patch is needed before applying
-- **Flexible**: Command-line options for custom configurations
-
-#### Advanced Options
-```bash
-# Specify a custom Ansible Python path
-python3 scripts/bcrypt_patch.py --path /path/to/ansible/python/site-packages
-
-# Check if patch is needed without applying it
-python3 scripts/bcrypt_patch.py --check
-
-# Force patching even if it seems already applied
-python3 scripts/bcrypt_patch.py --force
-
-# Show help
-python3 scripts/bcrypt_patch.py --help
-```
-
-#### Alternative Solutions
-If you prefer not to use the patch script:
-
-1. **Install a compatible version of bcrypt**:
-   ```bash
-   pip install bcrypt==3.2.0
-   ```
-
-2. **Use a different hashing method**:
-   Modify the playbook to use SHA-512 or other hash types instead of bcrypt where possible.
-
-### Docker Compose Variable Interpolation
-If you see warnings about undefined variables in Docker Compose:
-```
-The "apr1" variable is not set. Defaulting to a blank string.
-```
-
-This is normal when using password hashes with $ symbols. Our templates automatically escape these characters.
-
-## Troubleshooting
-
-### Password Management
-- For Traefik dashboard authentication, passwords are hashed using SHA-512
-- For Portainer, passwords are hashed using bcrypt with proper escaping for Docker Compose
-- Password hashing is done locally on the Ansible controller for security
-
-### Common Issues
-- If bcrypt hashing fails, ensure you have the correct version installed (see Compatibility Notes)
-- For Docker Compose errors, check that your Docker version is compatible (20.10.0+)
-- For DNS issues, verify that your Cloudflare API token has the correct permissions
-
-## Notes for macOS Deployments
-
-For macOS hosts, you may need to:
-1. Comment out Linux-specific tasks 
-2. Uncomment and adapt macOS-specific tasks in the role files
-3. Install Docker Desktop for Mac manually or via Homebrew
+See `python3 scripts/bcrypt_patch.py --help` for options.

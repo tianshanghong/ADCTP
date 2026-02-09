@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Checks prerequisites for metal deployment
+# Checks prerequisites for miuOps deployment
 #
 
 # Colors
@@ -25,7 +25,7 @@ SECURE="🔒"
 CHECK="✅"
 
 echo -e "\n${BOLD}${PURPLE}======================================${NC}"
-echo -e "${BOLD}${PURPLE}  METAL DEPLOYMENT READINESS CHECK ${NC}"
+echo -e "${BOLD}${PURPLE}  miuOps DEPLOYMENT READINESS CHECK ${NC}"
 echo -e "${BOLD}${PURPLE}======================================${NC}\n"
 
 echo -e "${BLUE}${ROCKET} Let's make sure your system is ready for an epic deployment!${NC}\n"
@@ -90,7 +90,7 @@ if [ -f "inventory.ini" ]; then
     echo -e "  ${GREEN}${CHECK} inventory.ini ${BOLD}found${NC}${GREEN} and ready to go${NC}"
 else
     echo -e "  ${RED}${ERROR} inventory.ini not found. Create it by running:${NC}"
-    echo -e "  ${BOLD}cp examples/inventory.ini.template inventory.ini${NC}"
+    echo -e "  ${BOLD}cp inventory.ini.template inventory.ini${NC}"
 fi
 
 # Check if group_vars/all.yml exists
@@ -98,7 +98,7 @@ if [ -f "group_vars/all.yml" ]; then
     echo -e "  ${GREEN}${CHECK} group_vars/all.yml ${BOLD}found${NC}${GREEN} and ready for action${NC}"
 else
     echo -e "  ${RED}${ERROR} group_vars/all.yml not found. Create it by running:${NC}"
-    echo -e "  ${BOLD}cp examples/all.yml.template group_vars/all.yml${NC}"
+    echo -e "  ${BOLD}cp group_vars/all.yml.template group_vars/all.yml${NC}"
 fi
 
 echo -e "\n${BLUE}${CLOUD} Dreaming of automated infrastructure...${NC}"

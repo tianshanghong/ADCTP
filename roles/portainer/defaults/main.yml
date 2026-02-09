@@ -1,7 +1,0 @@
----
-# Portainer default variables
-portainer_dir: "/opt/portainer"
-portainer_image: "portainer/portainer-ce:latest"
-portainer_agent_image: "portainer/agent:latest"
-portainer_subdomain: "portainer"
-portainer_admin_password: ""  # Leave empty for interactive prompt 

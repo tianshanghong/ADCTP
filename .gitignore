@@ -38,4 +38,7 @@ logs/
 
 # Ignore ansible-generated files
 .ansible/
-ansible.cfg.bak 
+ansible.cfg.bak
+
+# Ignore local planning notes
+notes/ 
