@@ -28,4 +28,3 @@ traefik_dashboard_enabled: true  # Set to false to disable the dashboard complet
 # Directories
 traefik_dir: /opt/traefik
 cloudflared_dir: /opt/cloudflared
-portainer_dir: /opt/portainer 

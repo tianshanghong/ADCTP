@@ -1,5 +1,5 @@
 ---
-- name: Deploy Docker + Traefik + Cloudflare Tunnel + Portainer
+- name: Bootstrap server with Docker + Traefik + Cloudflare Tunnel
   hosts: bare_metal
   become: true
   
@@ -64,8 +64,11 @@
       when: ssh_port is not defined
   
   roles:
-    - firewall
-    - docker
-    - traefik
-    - cloudflared
-    - portainer
+    - role: firewall
+      tags: ['firewall']
+    - role: docker
+      tags: ['docker']
+    - role: traefik
+      tags: ['traefik']
+    - role: cloudflared
+      tags: ['cloudflared']
