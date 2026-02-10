@@ -50,8 +50,8 @@ miuOps provisions a server with Docker, Traefik, Cloudflare Tunnel, and an iptab
 
 ```bash
 # Clone repository
-git clone https://github.com/miupay/miuOps
-cd miuOps
+git clone https://github.com/tianshanghong/miuops
+cd miuops
 
 # Install Ansible requirements
 ansible-galaxy collection install -r requirements.yml
@@ -75,7 +75,7 @@ ansible-playbook playbook.yml
 |---|---|---|
 | iptables firewall | `firewall` | INPUT + DOCKER-USER chains, rate-limited SSH, zero public container exposure |
 | Docker engine | `docker` | Docker CE + Compose plugin, hardened daemon config |
-| Traefik | `traefik` | Reverse proxy, automatic TLS via Cloudflare DNS challenge, label-based routing |
+| Traefik | `traefik` | Reverse proxy directories + Docker network (compose deployed via stack repo) |
 | Cloudflare Tunnel | `cloudflared` | Secure ingress, wildcard DNS records, systemd service |
 
 ## Domain Configuration
@@ -88,27 +88,9 @@ domains:
     zone_id: "your_zone_id_here"
 ```
 
-## Adding New Services
+## Deploy Services
 
-Add Traefik labels to any Docker Compose service:
-
-```yaml
-services:
-  myapp:
-    image: myapp:latest
-    networks:
-      - traefik_network
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.myapp.rule=Host(`myapp.example.com`)"
-      - "traefik.http.routers.myapp.entrypoints=websecure"
-      - "traefik.http.routers.myapp.tls=true"
-      - "traefik.http.services.myapp.loadbalancer.server.port=8080"
-
-networks:
-  traefik_network:
-    external: true
-```
+After bootstrap, create your private stack repo from the **[miuops-stack-template](https://github.com/tianshanghong/miuops-stack-template)** — it includes Traefik, S3 backups, and a GitHub Actions pipeline that deploys on push to `main`.
 
 ## Infrastructure Upgrades
 
