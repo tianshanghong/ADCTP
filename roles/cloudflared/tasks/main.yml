@@ -1,37 +1,39 @@
 ---
-# Deploy cloudflared
+# Install cloudflared, deploy tunnel credentials and config, create DNS records
 
 - name: Create cloudflared directory
   file:
     path: "{{ cloudflared_dir }}"
     state: directory
     mode: '0755'
+  tags: ['cloudflared']
 
-- name: Download cloudflared binary (Linux)
+- name: Add Cloudflare GPG key
   get_url:
-    url: "{{ cloudflared_binary_url }}"
-    dest: "/usr/local/bin/cloudflared"
-    mode: '0755'
-  when: ansible_os_family == 'Debian'
+    url: "{{ cloudflared_gpg_key_url }}"
+    dest: /etc/apt/keyrings/cloudflare-main.gpg
+    mode: '0644'
+  tags: ['cloudflared']
 
-# For macOS, uncomment and adapt as needed
-#- name: Install cloudflared (macOS)
-#  homebrew:
-#    name: cloudflare/cloudflare/cloudflared
-#    state: present
-#  when: ansible_os_family == 'Darwin'
+- name: Add Cloudflare apt repository
+  apt_repository:
+    repo: "{{ cloudflared_apt_repository }}"
+    state: present
+  tags: ['cloudflared']
+
+- name: Install cloudflared
+  apt:
+    name: cloudflared
+    state: latest
+    update_cache: yes
+  notify: Restart cloudflared
+  tags: ['cloudflared']
 
 - name: Check if credentials file exists
   stat:
     path: "{{ credentials_file }}"
   register: cf_credentials
-
-- name: Create credential directory if needed
-  file:
-    path: "{{ cloudflared_dir }}"
-    state: directory
-    mode: '0755'
-  when: not cf_credentials.stat.exists
+  tags: ['cloudflared']
 
 - name: Copy tunnel credentials if provided
   copy:
@@ -41,6 +43,7 @@
   when: not cf_credentials.stat.exists
   ignore_errors: true
   register: credentials_copy
+  tags: ['cloudflared']
 
 - name: Warning about missing credentials file
   debug:
@@ -49,8 +52,9 @@
       You need to run 'cloudflared tunnel login' and 'cloudflared tunnel create <name>'
       manually on this server, then copy the JSON credentials to {{ credentials_file }}.
   when: not cf_credentials.stat.exists and (credentials_copy is failed or credentials_copy is skipped)
+  tags: ['cloudflared']
 
-# Set up DNS records for all domains
+# DNS records — 400 means record already exists (idempotent)
 - name: Set up wildcard CNAME records for all domains
   uri:
     url: "https://api.cloudflare.com/client/v4/zones/{{ item.zone_id }}/dns_records"
@@ -65,11 +69,12 @@
       content: "{{ tunnel_id }}.cfargotunnel.com"
       ttl: 1
       proxied: true
-    status_code: [200, 201, 400]  # 400 might happen if record already exists
+    status_code: [200, 201, 400]
   loop: "{{ domains }}"
   when: cf_api_token != "" and item.zone_id is defined and item.zone_id != ""
   register: dns_result_wildcard
   ignore_errors: true
+  tags: ['cloudflared']
 
 - name: Set up root domain CNAME records for all domains
   uri:
@@ -85,11 +90,12 @@
       content: "{{ tunnel_id }}.cfargotunnel.com"
       ttl: 1
       proxied: true
-    status_code: [200, 201, 400]  # 400 might happen if record already exists
+    status_code: [200, 201, 400]
   loop: "{{ domains }}"
   when: cf_api_token != "" and item.zone_id is defined and item.zone_id != ""
   register: dns_result_root
   ignore_errors: true
+  tags: ['cloudflared']
 
 - name: Deploy cloudflared config
   template:
@@ -97,29 +103,24 @@
     dest: "{{ cloudflared_dir }}/config.yml"
     mode: '0644'
   notify: Restart cloudflared
-  when: ansible_os_family == 'Debian'
+  tags: ['cloudflared']
 
 - name: Create systemd service for cloudflared
   template:
     src: cloudflared.service.j2
     dest: /etc/systemd/system/cloudflared.service
     mode: '0644'
-  when: cloudflared_systemd_service and ansible_os_family == 'Debian'
-  register: systemd_service
-  notify: Restart cloudflared
-
-- name: Reload systemd
-  systemd:
-    daemon_reload: yes
-  when: systemd_service is changed and ansible_os_family == 'Debian'
+  notify:
+    - Reload systemd
+    - Restart cloudflared
+  tags: ['cloudflared']
 
 - name: Enable and start cloudflared service
   systemd:
     name: cloudflared
     enabled: yes
     state: started
-  when: cloudflared_systemd_service and ansible_os_family == 'Debian'
+  tags: ['cloudflared']
 
-# Handlers
 - name: Flush handlers
   meta: flush_handlers

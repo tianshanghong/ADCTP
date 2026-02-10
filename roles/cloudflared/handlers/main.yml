@@ -1,8 +1,11 @@
 ---
 # Handlers for cloudflared
 
+- name: Reload systemd
+  systemd:
+    daemon_reload: yes
+
 - name: Restart cloudflared
   systemd:
     name: cloudflared
     state: restarted
-  when: ansible_os_family == 'Debian' 

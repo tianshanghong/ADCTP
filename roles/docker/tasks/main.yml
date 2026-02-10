@@ -7,22 +7,30 @@
       - apt-transport-https
       - ca-certificates
       - curl
-      - software-properties-common
+      - gnupg
     state: present
     update_cache: yes
-  when: ansible_os_family == 'Debian'
+  tags: ['docker']
+
+- name: Create keyrings directory
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+  tags: ['docker']
 
 - name: Add Docker GPG key
-  apt_key:
-    url: "{{ docker_apt_key_url }}"
-    state: present
-  when: ansible_os_family == 'Debian'
+  get_url:
+    url: "{{ docker_gpg_key_url }}"
+    dest: /etc/apt/keyrings/docker.asc
+    mode: '0644'
+  tags: ['docker']
 
 - name: Add Docker repository
   apt_repository:
     repo: "{{ docker_apt_repository }}"
     state: present
-  when: ansible_os_family == 'Debian'
+  tags: ['docker']
 
 - name: Install Docker & Compose plugin
   apt:
@@ -33,36 +41,28 @@
       - docker-compose-plugin
     state: present
     update_cache: yes
-  when: ansible_os_family == 'Debian'
-
-# macOS installation using Homebrew (commented out by default)
-#- name: Install Docker Desktop for macOS
-#  homebrew_cask:
-#    name: docker
-#    state: present
-#  when: ansible_os_family == 'Darwin'
+  tags: ['docker']
 
 - name: Create Docker user group
   group:
     name: docker
     state: present
-  when: ansible_os_family == 'Debian'
+  tags: ['docker']
 
 - name: Add the current user to the Docker group
   user:
     name: "{{ ansible_user }}"
     groups: docker
     append: yes
-  when: ansible_os_family == 'Debian'
+  tags: ['docker']
 
 - name: Create Docker daemon configuration directory
   file:
     path: /etc/docker
     state: directory
     mode: '0755'
-  when: ansible_os_family == 'Debian'
+  tags: ['docker']
 
-# Disable inter-container communication and userland proxy
 - name: Configure Docker daemon with security enhancements
   copy:
     content: |
@@ -72,18 +72,12 @@
       }
     dest: /etc/docker/daemon.json
     mode: '0644'
-  register: docker_daemon_config
-  when: ansible_os_family == 'Debian'
+  notify: Restart Docker
+  tags: ['docker']
 
 - name: Ensure Docker is enabled and started
-  service:
+  systemd:
     name: docker
     state: started
     enabled: yes
-  when: ansible_os_family == 'Debian'
-
-- name: Restart Docker if configuration changed
-  service:
-    name: docker
-    state: restarted
-  when: ansible_os_family == 'Debian' and docker_daemon_config.changed
+  tags: ['docker']
