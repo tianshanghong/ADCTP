@@ -31,7 +31,7 @@ miuOps provisions a server with Docker, Traefik, Cloudflare Tunnel, and an iptab
 
 - Traffic flows through Cloudflare's network for DDoS protection and WAF
 - No ports are exposed to the internet (all ingress via Cloudflare Tunnel)
-- Services get automatic TLS certificates via Let's Encrypt DNS challenge
+- Traefik reverse proxy handles TLS termination and service routing
 - System and Docker networking are secured with iptables rules
 
 ## Prerequisites

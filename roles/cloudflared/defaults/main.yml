@@ -1,7 +1,5 @@
 ---
 # cloudflared default variables
 cloudflared_dir: "/opt/cloudflared"
-cloudflared_version: "latest"
-cloudflared_arch: "amd64"
-cloudflared_binary_url: "https://github.com/cloudflare/cloudflared/releases/{{ cloudflared_version }}/download/cloudflared-linux-{{ cloudflared_arch }}"
-cloudflared_systemd_service: true 
+cloudflared_gpg_key_url: "https://pkg.cloudflare.com/cloudflare-main.gpg"
+cloudflared_apt_repository: "deb [signed-by=/etc/apt/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared {{ ansible_facts['distribution_release'] }} main"
