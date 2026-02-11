@@ -38,7 +38,7 @@ echo "        S3 Backup Bucket Setup                "
 echo "=============================================="
 echo ""
 
-read -p "Enter project name (used as bucket prefix, e.g. myproject): " PROJECT_NAME
+read -rp "Enter project name (used as bucket prefix, e.g. myproject): " PROJECT_NAME
 
 if [[ -z "$PROJECT_NAME" ]]; then
     echo "Error: Project name cannot be empty."
@@ -48,7 +48,7 @@ fi
 BUCKET_NAME="${PROJECT_NAME}-backup"
 IAM_USER="${PROJECT_NAME}-backup"
 
-read -p "Enter AWS region [us-west-2]: " AWS_REGION
+read -rp "Enter AWS region [us-west-2]: " AWS_REGION
 AWS_REGION=${AWS_REGION:-us-west-2}
 
 echo ""
@@ -58,7 +58,7 @@ echo "  - IAM user:   $IAM_USER (Put/Get/List only — no Delete)"
 echo "  - Object Lock: Compliance mode, 30-day retention"
 echo "  - Lifecycle:   Glacier after 30 days, expire after 90 days"
 echo ""
-read -p "Continue? (y/N): " CONFIRM
+read -rp "Continue? (y/N): " CONFIRM
 if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
     echo "Aborted."
     exit 0
