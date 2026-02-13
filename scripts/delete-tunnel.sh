@@ -56,7 +56,7 @@ fi
 # Check if tunnels exist by a different method
 if [ -z "$TUNNELS_RAW" ] || [ "$TUNNELS_RAW" == "[]" ] || [ "$TUNNELS_RAW" == "null" ]; then
     echo "No tunnels found in your Cloudflare account."
-    echo "You can create a tunnel using: ./create-tunnel.sh"
+    echo "You can create a tunnel using: ./miuops up"
     exit 0
 fi
 

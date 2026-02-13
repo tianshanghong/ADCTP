@@ -16,9 +16,8 @@
 ├── files/                     # Tunnel credentials (gitignored)
 ├── images/
 │   └── postgres-walg/         # PostgreSQL 17 + WAL-G Docker image
+├── miuops                     # CLI entry point (./miuops up)
 ├── scripts/
-│   ├── check-prereqs.sh       # Prerequisite checker
-│   ├── create-tunnel.sh       # Cloudflare Tunnel creation
 │   ├── delete-tunnel.sh       # Cloudflare Tunnel deletion
 │   └── setup-s3-backup.sh     # S3 backup bucket + IAM user creation
 └── docs/                      # Documentation
