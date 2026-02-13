@@ -7,33 +7,31 @@ End-to-end walkthrough: from bare server to running services. For a condensed ve
 | Requirement | Purpose |
 |---|---|
 | Cloudflare account with your domain | DNS, CDN, WAF |
-| Cloudflare API token (Zone:DNS:Edit) | Ansible creates DNS records |
+| Cloudflare API token | Tunnel creation and DNS records |
 | Server with SSH access (Debian/Ubuntu) | Target machine |
-| Ansible >= 2.10 on your local machine | Runs the bootstrap playbook |
-| aws CLI (configured with admin credentials) | Backup bucket setup |
+| Local tools: `ansible`, `cloudflared`, `jq`, `curl`, `ssh` | The CLI checks these and guides you |
+| aws CLI (configured with admin credentials) | Backup bucket setup (Step 2) |
 
 ### Create a Cloudflare API token
 
-1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com) > My Profile > API Tokens
+1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com) > My Profile > [API Tokens](https://dash.cloudflare.com/profile/api-tokens)
 2. Click **Create Token**
-3. Use the **Edit zone DNS** template (or create a custom token with Zone:DNS:Edit)
+3. Use the **Edit zone DNS** template
 4. Scope it to the zone(s) you'll use
-5. Save the token — you'll need it for `group_vars/all.yml`
+5. Save the token — you'll pass it as `CF_API_TOKEN` when running `./miuops up`
 
-### Install Ansible
+### Install local tools
 
 ```bash
 # macOS
-brew install ansible
+brew install ansible cloudflare/cloudflare/cloudflared jq
 
 # Ubuntu/Debian
-sudo apt update && sudo apt install ansible
-
-# pip
-pip install ansible
+sudo apt update && sudo apt install ansible jq
+# cloudflared: see https://pkg.cloudflare.com/
 ```
 
-### Install aws CLI
+### Install aws CLI (for backups, Step 2)
 
 ```bash
 # macOS
@@ -49,88 +47,60 @@ aws configure
 
 ## Step 1: Bootstrap the server
 
-### Clone this repository
-
 ```bash
 git clone https://github.com/tianshanghong/miuops
 cd miuops
+CF_API_TOKEN=your_token ./miuops up root@203.0.113.10 example.com
 ```
 
-### Install Ansible requirements
+The CLI handles everything:
+1. Checks prerequisites (and tells you how to install any that are missing)
+2. Looks up the Cloudflare Zone ID for your domain
+3. Creates a Cloudflare Tunnel (or reuses an existing one)
+4. Generates `inventory.ini` and `group_vars/all.yml`
+5. Installs Ansible Galaxy dependencies
+6. Runs the playbook
 
-```bash
-ansible-galaxy collection install -r requirements.yml
-```
-
-### Configure inventory
-
-```bash
-cp inventory.ini.template inventory.ini
-```
-
-Edit `inventory.ini` with your server details:
-
-```ini
-[bare_metal]
-server1 ansible_host=192.0.2.10 ansible_user=admin
-```
-
-### Configure variables
-
-```bash
-cp group_vars/all.yml.template group_vars/all.yml
-```
-
-Edit `group_vars/all.yml`:
-
-```yaml
-ssh_port: 22
-
-domains:
-  - domain: "example.com"
-    zone_id: "your_cloudflare_zone_id"
-
-cf_api_token: "your_cloudflare_api_token"
-tunnel_id: ""           # filled after tunnel creation
-# credentials_file defaults to /opt/cloudflared/{{ tunnel_id }}.json
-```
-
-### Create a Cloudflare Tunnel
-
-```bash
-./scripts/create-tunnel.sh
-```
-
-The script will:
-1. Ensure `cloudflared` and `jq` are installed
-2. Log in to Cloudflare (if needed)
-3. Create a tunnel and download credentials to `files/`
-4. Output the tunnel ID and domain
-
-Copy the tunnel ID and credentials file path into `group_vars/all.yml`:
-
-```yaml
-tunnel_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-# credentials_file is derived from tunnel_id automatically
-```
-
-### Check prerequisites
-
-```bash
-./scripts/check-prereqs.sh
-```
-
-### Run the playbook
-
-```bash
-ansible-playbook playbook.yml
-```
-
-This provisions the server with:
+The playbook provisions the server with:
 - **iptables firewall** — default-DROP on INPUT and DOCKER-USER chains, rate-limited SSH
 - **Docker CE + Compose** — hardened daemon (ICC disabled, userland proxy disabled)
 - **Traefik directories + Docker network** — ready for compose deployment
 - **cloudflared** — systemd service, wildcard + root CNAME DNS records
+
+### Dry run
+
+Preview what would happen without making changes:
+
+```bash
+CF_API_TOKEN=your_token ./miuops up --dry-run root@203.0.113.10 example.com
+```
+
+### Manual setup (alternative)
+
+If you prefer to configure things manually instead of using the CLI:
+
+<details>
+<summary>Click to expand manual steps</summary>
+
+```bash
+# Install Ansible requirements
+ansible-galaxy collection install -r requirements.yml
+
+# Configure
+cp inventory.ini.template inventory.ini
+cp group_vars/all.yml.template group_vars/all.yml
+# Edit inventory.ini with your server details
+# Edit group_vars/all.yml with your domain, zone ID, API token
+
+# Create Cloudflare Tunnel (handled automatically by ./miuops up)
+cloudflared tunnel create example.com
+# Copy tunnel credentials and ID into group_vars/all.yml
+
+# Bootstrap server
+ansible-playbook playbook.yml
+```
+
+</details>
 
 ## Step 2: Set up backups
 

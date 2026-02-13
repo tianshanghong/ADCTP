@@ -34,39 +34,40 @@ miuOps provisions a server with Docker, Traefik, Cloudflare Tunnel, and an iptab
 - Traefik reverse proxy handles TLS termination and service routing
 - System and Docker networking are secured with iptables rules
 
-## Prerequisites
-
-1. A Cloudflare account with your domain
-2. Cloudflare API token with Zone:DNS:Edit permissions
-3. Cloudflare Tunnel created and credentials downloaded
-4. Bare metal server with SSH access (Debian/Ubuntu)
-5. Ansible >= 2.10 on your control machine
-
-```bash
-./scripts/check-prereqs.sh
-```
-
 ## Quick Start
 
 ```bash
-# Clone repository
 git clone https://github.com/tianshanghong/miuops
 cd miuops
+CF_API_TOKEN=your_token ./miuops up root@203.0.113.10 example.com
+```
 
-# Install Ansible requirements
-ansible-galaxy collection install -r requirements.yml
+That's it. The CLI handles Cloudflare Tunnel creation, config generation, Ansible Galaxy dependencies, and runs the playbook — all in one command.
 
-# Configure
-cp inventory.ini.template inventory.ini
-cp group_vars/all.yml.template group_vars/all.yml
-nano inventory.ini
-nano group_vars/all.yml
+### Prerequisites
 
-# Create Cloudflare Tunnel (or copy existing credentials)
-./scripts/create-tunnel.sh
+You need these installed on your local machine (the CLI checks and tells you how to install any that are missing):
 
-# Bootstrap server
-ansible-playbook playbook.yml
+| Tool | macOS | Linux |
+|---|---|---|
+| `ansible` | `brew install ansible` | `sudo apt install ansible` |
+| `cloudflared` | `brew install cloudflare/cloudflare/cloudflared` | [pkg.cloudflare.com](https://pkg.cloudflare.com/) |
+| `jq` | `brew install jq` | `sudo apt install jq` |
+| `curl`, `ssh` | pre-installed | pre-installed |
+
+You also need:
+- A **Cloudflare account** with your domain added
+- A **Cloudflare API token** — go to [API Tokens](https://dash.cloudflare.com/profile/api-tokens), click "Create Token", and use the **Edit zone DNS** template
+- A **bare metal server** with SSH access (Debian/Ubuntu)
+
+### Options
+
+```bash
+# Preview what would happen without making changes
+CF_API_TOKEN=your_token ./miuops up --dry-run root@203.0.113.10 example.com
+
+# SSH user defaults to root if omitted
+CF_API_TOKEN=your_token ./miuops up 203.0.113.10 example.com
 ```
 
 ## What Gets Deployed
@@ -77,16 +78,6 @@ ansible-playbook playbook.yml
 | Docker engine | `docker` | Docker CE + Compose plugin, hardened daemon config |
 | Traefik | `traefik` | Reverse proxy directories + Docker network (compose deployed via stack repo) |
 | Cloudflare Tunnel | `cloudflared` | Secure ingress, wildcard DNS records, systemd service |
-
-## Domain Configuration
-
-In `group_vars/all.yml`:
-
-```yaml
-domains:
-  - domain: "example.com"
-    zone_id: "your_zone_id_here"
-```
 
 ## Deploy Services
 
@@ -110,7 +101,7 @@ ansible-playbook playbook.yml --tags docker
 
 ## Tunnel Management
 
-- `scripts/create-tunnel.sh` — Create a Cloudflare Tunnel and prepare credentials
+- `./miuops up` automatically creates and configures a Cloudflare Tunnel
 - `scripts/delete-tunnel.sh` — Delete a tunnel and clean up credentials
 - DNS records are managed by Ansible during bootstrap
 
