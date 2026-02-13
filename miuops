@@ -177,7 +177,7 @@ cmd_up() {
         local tunnel_output
         tunnel_output=$(cloudflared tunnel create "${tunnel_name}" 2>&1) || true
         tunnel_id=$(echo "$tunnel_output" | \
-            grep -o '[a-f0-9]\{8\}-[a-f0-9]\{4\}-[a-f0-9]\{4\}-[a-f0-9]\{4\}-[a-f0-9]\{12\}' | head -1)
+            grep -o '[a-f0-9]\{8\}-[a-f0-9]\{4\}-[a-f0-9]\{4\}-[a-f0-9]\{4\}-[a-f0-9]\{12\}' | head -1) || true
 
         if [[ -n "$tunnel_id" ]]; then
             info "Created tunnel: ${tunnel_id}"
