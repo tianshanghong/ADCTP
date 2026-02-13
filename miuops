@@ -163,7 +163,7 @@ cmd_up() {
         local existing
         existing=$(cloudflared tunnel list -o json 2>/dev/null || echo "[]")
         tunnel_id=$(echo "$existing" | jq -r --arg name "$tunnel_name" \
-            '.[] | select(.name == $name and (.deleted_at == null or .deleted_at == "")) | .id' \
+            '.[] | select(.name == $name and (.deleted_at == null or .deleted_at == "" or .deleted_at == "0001-01-01T00:00:00Z")) | .id' \
             2>/dev/null | head -1) || true
     fi
 
@@ -187,7 +187,7 @@ cmd_up() {
             local retry
             retry=$(cloudflared tunnel list -o json 2>/dev/null || echo "[]")
             tunnel_id=$(echo "$retry" | jq -r --arg name "$tunnel_name" \
-                '.[] | select(.name == $name and (.deleted_at == null or .deleted_at == "")) | .id' \
+                '.[] | select(.name == $name and (.deleted_at == null or .deleted_at == "" or .deleted_at == "0001-01-01T00:00:00Z")) | .id' \
                 2>/dev/null | head -1) || true
             [[ -n "$tunnel_id" ]] || die "Failed to create or find tunnel '${tunnel_name}'
   - Is cloudflared logged in? (cloudflared login)
