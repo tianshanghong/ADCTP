@@ -158,10 +158,21 @@ cmd_up() {
         fi
     fi
 
+    # Validate cert by listing tunnels; re-login if stale
     if [[ -f ~/.cloudflared/cert.pem ]]; then
         info "Checking for existing tunnel '${tunnel_name}'..."
         local existing
-        existing=$(cloudflared tunnel list -o json 2>/dev/null || echo "[]")
+        existing=$(cloudflared tunnel list -o json 2>&1) || true
+        if ! echo "$existing" | jq -e 'type == "array"' >/dev/null 2>&1; then
+            if $DRY_RUN; then
+                warn "Cloudflare cert.pem appears stale — would need to re-login"
+            else
+                warn "Cloudflare cert.pem is stale, re-authenticating..."
+                rm -f ~/.cloudflared/cert.pem
+                cloudflared login
+                existing=$(cloudflared tunnel list -o json 2>/dev/null || echo "[]")
+            fi
+        fi
         tunnel_id=$(echo "$existing" | jq -r --arg name "$tunnel_name" \
             '.[] | select(.name == $name and (.deleted_at == null or .deleted_at == "" or .deleted_at == "0001-01-01T00:00:00Z")) | .id' \
             2>/dev/null | head -1) || true
@@ -183,7 +194,7 @@ cmd_up() {
             info "Created tunnel: ${tunnel_id}"
         else
             # Creation failed (likely "already exists") — try to find it
-            warn "Tunnel creation returned no ID, looking up existing tunnel..."
+            warn "Tunnel creation returned no ID: ${tunnel_output}"
             local retry
             retry=$(cloudflared tunnel list -o json 2>/dev/null || echo "[]")
             tunnel_id=$(echo "$retry" | jq -r --arg name "$tunnel_name" \
