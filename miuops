@@ -1,0 +1,281 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+die()  { echo -e "${RED}error:${NC} $1" >&2; exit 1; }
+info() { echo -e "${GREEN}=>${NC} $1"; }
+warn() { echo -e "${YELLOW}=>${NC} $1"; }
+dry()  { echo -e "  ${YELLOW}[dry-run]${NC} $1"; }
+
+DRY_RUN=false
+
+usage() {
+    cat <<EOF
+Usage: ./miuops up [--dry-run] <user@host> <domain>
+
+Bootstrap a bare-metal server with Docker, Traefik, and Cloudflare Tunnel.
+
+Options:
+  --dry-run    Show what would happen without making changes
+
+Environment:
+  CF_API_TOKEN   Cloudflare API token (use 'Edit zone DNS' template)
+
+Example:
+  CF_API_TOKEN=xxx ./miuops up root@203.0.113.10 example.com
+EOF
+    exit 1
+}
+
+cmd_up() {
+    # Parse flags and positional args in any order
+    local positional=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run) DRY_RUN=true; shift ;;
+            -*) die "Unknown flag: $1" ;;
+            *) positional+=("$1"); shift ;;
+        esac
+    done
+
+    [[ ${#positional[@]} -ge 2 ]] || usage
+
+    local target="${positional[0]}" domain="${positional[1]}"
+    local ssh_user ssh_host
+
+    # Parse user@host
+    if [[ "$target" == *@* ]]; then
+        ssh_user="${target%%@*}"
+        ssh_host="${target#*@}"
+    else
+        ssh_user="root"
+        ssh_host="$target"
+    fi
+
+    # Validate domain format (portable — no bash regex quantifiers)
+    if ! echo "$domain" | grep -qE '^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}$'; then
+        die "Invalid domain: '${domain}'
+  Expected format: example.com"
+    fi
+
+    [[ -n "${CF_API_TOKEN:-}" ]] || die "CF_API_TOKEN is required
+  1. Go to https://dash.cloudflare.com/profile/api-tokens
+  2. Click 'Create Token'
+  3. Use the 'Edit zone DNS' template
+  4. Select your zone, then create
+  Then run: CF_API_TOKEN=your_token ./miuops up ..."
+
+    # ── Step 1: Prerequisites ──────────────────────────────────────
+    info "Checking prerequisites..."
+
+    local prereqs_ok=true
+
+    command -v curl >/dev/null 2>&1 \
+        || die "curl not found
+  macOS:  curl is pre-installed
+  Linux:  sudo apt install curl"
+    command -v ssh >/dev/null 2>&1 \
+        || die "ssh not found
+  macOS:  ssh is pre-installed
+  Linux:  sudo apt install openssh-client"
+    command -v ansible-playbook >/dev/null 2>&1 \
+        || die "ansible not found
+  macOS:  brew install ansible
+  Linux:  sudo apt install ansible"
+    command -v cloudflared >/dev/null 2>&1 \
+        || die "cloudflared not found
+  macOS:  brew install cloudflare/cloudflare/cloudflared
+  Linux:  See https://pkg.cloudflare.com/"
+    command -v jq >/dev/null 2>&1 \
+        || die "jq not found
+  macOS:  brew install jq
+  Linux:  sudo apt install jq"
+
+    if ! ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no \
+         "${ssh_user}@${ssh_host}" true 2>/dev/null; then
+        if $DRY_RUN; then
+            warn "Cannot SSH to ${ssh_user}@${ssh_host} — would need to be reachable"
+            prereqs_ok=false
+        else
+            die "Cannot SSH to ${ssh_user}@${ssh_host}
+  - Is the IP/hostname correct?
+  - Is your SSH key added? (ssh-add -l)
+  - Is the server accepting connections on port 22?"
+        fi
+    fi
+
+    if $prereqs_ok; then
+        info "Prerequisites OK"
+    else
+        info "Prerequisites OK (with warnings)"
+    fi
+
+    # ── Step 2: Look up Zone ID ────────────────────────────────────
+    info "Looking up Zone ID for ${domain}..."
+
+    local zone_response zone_id http_code
+    zone_response=$(curl -s -w "\n%{http_code}" \
+        "https://api.cloudflare.com/client/v4/zones?name=${domain}" \
+        -H "Authorization: Bearer ${CF_API_TOKEN}" \
+        -H "Content-Type: application/json") || die "Cloudflare API request failed — network error"
+
+    http_code=$(echo "$zone_response" | tail -1)
+    zone_response=$(echo "$zone_response" | sed '$d')
+
+    case "$http_code" in
+        200) ;;
+        401|403) die "Cloudflare API returned ${http_code} (unauthorized)
+  - Is your CF_API_TOKEN valid?
+  - Does it have Zone:Zone:Read and Zone:DNS:Edit permissions?" ;;
+        *)  die "Cloudflare API returned HTTP ${http_code}
+  Response: $(echo "$zone_response" | jq -r '.errors[0].message // empty' 2>/dev/null || echo 'unknown')" ;;
+    esac
+
+    zone_id=$(echo "$zone_response" | jq -r '.result[0].id // empty')
+    [[ -n "$zone_id" ]] || die "Zone not found for '${domain}'
+  - Is the domain added to your Cloudflare account?
+  - Does your API token have access to this zone?"
+
+    info "Zone ID: ${zone_id}"
+
+    # ── Step 3: Create or reuse Cloudflare Tunnel ──────────────────
+    local tunnel_name="$domain"
+    local tunnel_id=""
+
+    if [[ ! -f ~/.cloudflared/cert.pem ]]; then
+        if $DRY_RUN; then
+            warn "Cloudflare login would be required (no cert.pem found)"
+        else
+            warn "Cloudflare login required..."
+            cloudflared login
+        fi
+    fi
+
+    if [[ -f ~/.cloudflared/cert.pem ]]; then
+        info "Checking for existing tunnel '${tunnel_name}'..."
+        local existing
+        existing=$(cloudflared tunnel list -o json 2>/dev/null || echo "[]")
+        tunnel_id=$(echo "$existing" | jq -r --arg name "$tunnel_name" \
+            '.[] | select(.name == $name and (.deleted_at == null or .deleted_at == "" or .deleted_at == "0001-01-01T00:00:00Z")) | .id' \
+            2>/dev/null | head -1) || true
+    fi
+
+    if [[ -n "$tunnel_id" ]]; then
+        info "Reusing existing tunnel: ${tunnel_id}"
+    elif $DRY_RUN; then
+        tunnel_id="<would-be-created>"
+        dry "Would create tunnel '${tunnel_name}'"
+    else
+        info "Creating tunnel '${tunnel_name}'..."
+        local tunnel_output
+        tunnel_output=$(cloudflared tunnel create "${tunnel_name}" 2>&1) || true
+        tunnel_id=$(echo "$tunnel_output" | \
+            grep -o '[a-f0-9]\{8\}-[a-f0-9]\{4\}-[a-f0-9]\{4\}-[a-f0-9]\{4\}-[a-f0-9]\{12\}' | head -1) || true
+
+        if [[ -n "$tunnel_id" ]]; then
+            info "Created tunnel: ${tunnel_id}"
+        else
+            # Creation failed (likely "already exists") — try to find it
+            warn "Tunnel creation returned no ID, looking up existing tunnel..."
+            local retry
+            retry=$(cloudflared tunnel list -o json 2>/dev/null || echo "[]")
+            tunnel_id=$(echo "$retry" | jq -r --arg name "$tunnel_name" \
+                '.[] | select(.name == $name and (.deleted_at == null or .deleted_at == "" or .deleted_at == "0001-01-01T00:00:00Z")) | .id' \
+                2>/dev/null | head -1) || true
+            [[ -n "$tunnel_id" ]] || die "Failed to create or find tunnel '${tunnel_name}'
+  - Is cloudflared logged in? (cloudflared login)
+  - Run 'cloudflared tunnel list' to check"
+            info "Found existing tunnel: ${tunnel_id}"
+        fi
+    fi
+
+    # Copy credentials
+    if ! $DRY_RUN; then
+        mkdir -p "${SCRIPT_DIR}/files"
+        if [[ ! -f "${SCRIPT_DIR}/files/${tunnel_id}.json" ]]; then
+            if [[ -f ~/.cloudflared/${tunnel_id}.json ]]; then
+                cp ~/.cloudflared/"${tunnel_id}.json" "${SCRIPT_DIR}/files/"
+                info "Tunnel credentials copied"
+            else
+                die "Credentials not found at ~/.cloudflared/${tunnel_id}.json
+  - Did 'cloudflared tunnel create' succeed?
+  - Check ~/.cloudflared/ for JSON files"
+            fi
+        fi
+    else
+        dry "Would copy tunnel credentials to files/"
+    fi
+
+    # ── Step 4: Generate config files ──────────────────────────────
+
+    # Warn if existing config points to a different domain
+    if [[ -f "${SCRIPT_DIR}/group_vars/all.yml" ]]; then
+        local existing_domain
+        existing_domain=$(sed -n 's/.*domain:[[:space:]]*"\([^"]*\)".*/\1/p' "${SCRIPT_DIR}/group_vars/all.yml" | head -1) || true
+        if [[ -n "$existing_domain" && "$existing_domain" != "$domain" ]]; then
+            warn "Existing config uses domain '${existing_domain}' — will overwrite with '${domain}'"
+        fi
+    fi
+
+    local inventory_content="[bare_metal]
+${ssh_host} ansible_user=${ssh_user}"
+
+    local groupvars_content="---
+domains:
+  - domain: \"${domain}\"
+    zone_id: \"${zone_id}\"
+
+cf_api_token: \"${CF_API_TOKEN}\"
+
+tunnel_id: \"${tunnel_id}\"
+credentials_file: \"/opt/cloudflared/{{ tunnel_id }}.json\""
+
+    if $DRY_RUN; then
+        info "Would generate inventory.ini:"
+        echo "$inventory_content"
+        echo ""
+        info "Would generate group_vars/all.yml:"
+        echo "$groupvars_content"
+        echo ""
+        dry "Would install Ansible Galaxy requirements"
+        dry "Would run: ansible-playbook playbook.yml"
+        echo ""
+        info "${BOLD}Dry run complete.${NC} Re-run without --dry-run to execute."
+    else
+        info "Generating inventory.ini..."
+        echo "$inventory_content" > "${SCRIPT_DIR}/inventory.ini"
+
+        info "Generating group_vars/all.yml..."
+        echo "$groupvars_content" > "${SCRIPT_DIR}/group_vars/all.yml"
+
+        # ── Step 5: Install Ansible Galaxy requirements ────────────
+        info "Installing Ansible Galaxy requirements..."
+        if ! ansible-galaxy collection install -r "${SCRIPT_DIR}/requirements.yml" 2>&1; then
+            die "Failed to install Ansible Galaxy requirements"
+        fi
+
+        # ── Step 6: Run playbook ───────────────────────────────────
+        info "Running playbook..."
+        ansible-playbook "${SCRIPT_DIR}/playbook.yml"
+
+        echo ""
+        info "${BOLD}Done!${NC} Server bootstrapped."
+        info "Tunnel: ${tunnel_id}"
+        info "Domain: *.${domain} -> Cloudflare Tunnel -> Traefik"
+        echo ""
+        info "Next: create your stack repo from miuops-stack-template"
+    fi
+}
+
+# ── Main ───────────────────────────────────────────────────────────
+case "${1:-}" in
+    up) shift; cmd_up "$@" ;;
+    *)  usage ;;
+esac
